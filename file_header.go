@@ -91,18 +91,18 @@ func (s ShapeType) String() string {
 	}
 }
 
-type MainFileRecordHeader struct {
+type mainFileRecordHeader struct {
 	RecordNumber  int32
 	ContentLength int32
 }
 
-func (h *MainFileRecordHeader) String() string {
+func (h *mainFileRecordHeader) String() string {
 	str := fmt.Sprintf("RecordNumber %d\n", h.RecordNumber)
 	str += fmt.Sprintf("ContentLength %d\n", h.ContentLength)
 	return str
 }
 
-func NewMainFileHeaderFromReader(r io.Reader) (hdr *MainFileHeader, err error) {
+func newMainFileHeaderFromReader(r io.Reader) (hdr *MainFileHeader, err error) {
 
 	var fileCode int32
 	if err = binary.Read(r, binary.BigEndian, &fileCode); err != nil {
@@ -160,8 +160,8 @@ func NewMainFileHeaderFromReader(r io.Reader) (hdr *MainFileHeader, err error) {
 	return
 }
 
-func NewMainFileRecordHeaderFromReader(r io.Reader) (hdr *MainFileRecordHeader, err error) {
-	hdr = &MainFileRecordHeader{}
+func newMainFileRecordHeaderFromReader(r io.Reader) (hdr *mainFileRecordHeader, err error) {
+	hdr = new(mainFileRecordHeader)
 	if err = binary.Read(r, binary.BigEndian, &hdr.RecordNumber); err != nil {
 		return
 	}
