@@ -78,10 +78,12 @@ func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
 			entry[i] = strings.TrimSpace((string)(rawField))
 		case Number, Integer:
 			if desc.DecimalCount == 0 {
+				var val int64
 				numberStr := strings.TrimSpace((string)(rawField))
-				if entry[i], err = strconv.ParseInt(numberStr, 10, 64); err != nil {
+				if val, err = strconv.ParseInt(numberStr, 10, 64); err != nil {
 					return
 				}
+				entry[i] = int(val)
 				break
 			}
 			// handle it like a float ...
