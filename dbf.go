@@ -13,23 +13,27 @@ import (
 type DBFFile struct {
 	DBFFileHeader    *DBFFileHeader
 	FieldDescriptors []FieldDescriptor
-	Entries          [][]interface{}
+	FieldIndicies    map[string]int // indicies of each field by name
+	countRead        uint32
+	r                io.Reader
 }
 
-func NewDBFFile(r io.Reader) (dbf *DBFFile, err error) {
+func OpenDBFFile(r io.Reader) (dbf *DBFFile, err error) {
 	dbf = &DBFFile{}
-	if dbf.DBFFileHeader, err = NewDBFFileHeader(r); err != nil {
+	dbf.r = r
+	if dbf.DBFFileHeader, err = newDBFFileHeader(r); err != nil {
 		return
 	}
 	len_fd := dbf.DBFFileHeader.LenHeader - 32 // the fixed portion of the header is 32 bytes
 	num_fd := (int)(len_fd / 32)               // each field descriptor are 32 bytes each, see below.
-
+	dbf.FieldIndicies = make(map[string]int)
 	var fd FieldDescriptor
 	for i := 0; i != num_fd; i++ {
-		if err = binary.Read(r, L, &fd); err != nil {
+		if err = binary.Read(dbf.r, l, &fd); err != nil {
 			return
 		}
 		dbf.FieldDescriptors = append(dbf.FieldDescriptors, fd)
+		dbf.FieldIndicies[fd.fieldName()] = i
 	}
 	bullshitByte := make([]byte, 1)
 	var n int
@@ -39,63 +43,70 @@ func NewDBFFile(r io.Reader) (dbf *DBFFile, err error) {
 		}
 		return
 	}
-	err = dbf.readEntries(r)
+	dbf.countRead = (uint32)(0)
 	return
 }
 
-func (dbf *DBFFile) readEntries(r io.Reader) (err error) {
-	countRead := (uint32)(0)
+// Get next record in file. If end of file, err=io.EOF.
+func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
+	if dbf.countRead == dbf.DBFFileHeader.NumRecords {
+		err = io.EOF
+		return
+	}
 
 	rawEntry := make([]byte, dbf.DBFFileHeader.LenRecord)
 	var n int
-	for {
-		if n, err = r.Read(rawEntry); (err != nil) || n != (int)(dbf.DBFFileHeader.LenRecord) {
-			if err == nil {
-				err = fmt.Errorf("expected %d bytes, read: %d", dbf.DBFFileHeader.LenRecord, n)
-			}
-			return
+	if n, err = dbf.r.Read(rawEntry); (err != nil) || n != (int)(dbf.DBFFileHeader.LenRecord) {
+		if err == nil {
+			err = fmt.Errorf("expected %d bytes, read: %d", dbf.DBFFileHeader.LenRecord, n)
 		}
-		if 0x2a == rawEntry[0] { // record deleted
-			continue
-		}
+		return
+	}
+	if 0x2a == rawEntry[0] { // record deleted
+		return
+	}
 
-		entry := make([]interface{}, len(dbf.FieldDescriptors))
-		var offset = 1
+	entry = make([]interface{}, len(dbf.FieldDescriptors))
+	var offset = 1
 
-		for i, desc := range dbf.FieldDescriptors {
-			rawField := rawEntry[offset : offset+(int)(desc.FieldLength)]
-			offset += (int)(desc.FieldLength)
+	for i, desc := range dbf.FieldDescriptors {
+		rawField := rawEntry[offset : offset+(int)(desc.FieldLength)]
+		offset += (int)(desc.FieldLength)
 
-			switch desc.FieldType {
-			case Character:
-				entry[i] = (string)(rawField)
-			case Number:
-				if desc.DecimalCount == 0 {
-					numberStr := strings.TrimLeft((string)(rawField), " ")
-					if entry[i], err = strconv.ParseInt(numberStr, 10, 64); err != nil {
-						return
-					}
-					break
-				}
-				// handle it like a float ...
-				fallthrough
-			case Float:
-				numberStr := strings.TrimLeft((string)(rawField), " ")
-				if entry[i], err = strconv.ParseFloat(numberStr, 64); err != nil {
+		switch desc.FieldType {
+		case Character, VarCharVar:
+			entry[i] = strings.TrimSpace((string)(rawField))
+		case Number, Integer:
+			if desc.DecimalCount == 0 {
+				numberStr := strings.TrimSpace((string)(rawField))
+				if entry[i], err = strconv.ParseInt(numberStr, 10, 64); err != nil {
 					return
 				}
-
-			default:
-				err = fmt.Errorf("unsupported type: %c", desc.FieldType)
+				break
 			}
+			// handle it like a float ...
+			fallthrough
+		case Float, Double:
+			numberStr := strings.TrimSpace((string)(rawField))
+			if entry[i], err = strconv.ParseFloat(numberStr, 64); err != nil {
+				return
+			}
+		case Logical:
+			switch (string)(rawField) {
+			case "1", "T", "t", "Y", "y":
+				entry[i] = true
+			case "0", "F", "f", "N", "n":
+				entry[i] = false
+			default:
+				err = fmt.Errorf("Unsupported logical value `%v`",
+					(string)(rawField))
+				return
+			}
+		default:
+			err = fmt.Errorf("unsupported type: %c", desc.FieldType)
 		}
-		dbf.Entries = append(dbf.Entries, entry)
-
-		countRead++
-		if countRead == dbf.DBFFileHeader.NumRecords {
-			break
-		}
-	} // for
+	}
+	dbf.countRead++
 	return
 }
 
@@ -126,9 +137,9 @@ func (hdr *DBFFileHeader) String() string {
 	return str
 }
 
-func NewDBFFileHeader(r io.Reader) (hdr *DBFFileHeader, err error) {
+func newDBFFileHeader(r io.Reader) (hdr *DBFFileHeader, err error) {
 	hdr = &DBFFileHeader{}
-	err = binary.Read(r, L, hdr)
+	err = binary.Read(r, l, hdr)
 	return
 }
 
@@ -170,16 +181,16 @@ type FieldDescriptor struct {
 }
 
 func (f *FieldDescriptor) String() string {
-	str := fmt.Sprintf("Name : %s\n", f.FieldName())
+	str := fmt.Sprintf("Name : %s\n", f.fieldName())
 	str += fmt.Sprintf("Type : %c\n", f.FieldType)
 	str += fmt.Sprintf("Len  : %d\n", f.FieldLength)
 	str += fmt.Sprintf("Count: %d\n", f.DecimalCount)
 	return str
 }
-func (f *FieldDescriptor) FieldName() string {
+func (f *FieldDescriptor) fieldName() string {
 	for i, b := range f.FieldName_ {
 		if b == '\000' {
-			return (string)(f.FieldName_[0:i])
+			return strings.TrimSpace((string)(f.FieldName_[0:i]))
 		}
 	}
 	return ""

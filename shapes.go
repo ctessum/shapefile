@@ -3,47 +3,50 @@ package shapefile
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/twpayne/gogeom/geom"
 	"io"
 )
 
-var L = binary.LittleEndian
-var B = binary.BigEndian
+var l = binary.LittleEndian
+var b = binary.BigEndian
 
-func (rec *Record) recordContent(r io.Reader) (err error) {
-	if err = binary.Read(r, L, &rec.Type); err != nil {
-		return err
+func (rec *ShapefileRecord) recordContent(r io.Reader) (err error) {
+	if err = binary.Read(r, l, &rec.Type); err != nil {
+		return
 	}
 	// this implementation does not enforce the rule that all
 	// records in a file must be the same type.
 	switch rec.Type {
 	case NULL_SHAPE:
-		rec.content, err = readNull(r)
+		rec.Geometry, rec.Bounds, err = readNull(r)
 	case POINT:
-		rec.content, err = readPoint(r)
+		rec.Geometry, rec.Bounds, err = readPoint(r)
 	case POLY_LINE:
-		rec.content, err = readPolyLine(r)
+		rec.Geometry, rec.Bounds, err = readPolyLine(r)
 	case POLYGON:
-		rec.content, err = readPolygon(r)
+		rec.Geometry, rec.Bounds, err = readPolygon(r)
 	case MULTI_POINT:
-		rec.content, err = readMultiPoint(r)
+		rec.Geometry, rec.Bounds, err = readMultiPoint(r)
 	case POINT_Z:
-		rec.content, err = readPointZ(r)
+		rec.Geometry, rec.Bounds, err = readPointZ(r)
 	case POLY_LINE_Z:
-		rec.content, err = readPolyLineZ(r)
+		rec.Geometry, rec.Bounds, err = readPolyLineZ(r)
 	case POLYGON_Z:
-		rec.content, err = readPolygonZ(r)
+		rec.Geometry, rec.Bounds, err = readPolygonZ(r)
 	case MULTI_POINT_Z:
-		rec.content, err = readMultiPointZ(r)
+		rec.Geometry, rec.Bounds, err = readMultiPointZ(r)
 	case POINT_M:
-		rec.content, err = readPointM(r)
+		rec.Geometry, rec.Bounds, err = readPointM(r)
 	case POLY_LINE_M:
-		rec.content, err = readPolyLineM(r)
+		rec.Geometry, rec.Bounds, err = readPolyLineM(r)
 	case POLYGON_M:
-		rec.content, err = readPolygonM(r)
+		rec.Geometry, rec.Bounds, err = readPolygonM(r)
 	case MULTI_POINT_M:
-		rec.content, err = readMultiPointM(r)
-	case MULTI_PATCH:
-		rec.content, err = readMultiPatch(r)
+		rec.Geometry, rec.Bounds, err = readMultiPointM(r)
+	// drop multipatch capability for now because don't know
+	// what to do with the triangle patches.
+	//case MULTI_PATCH:
+	//	rec.Geometry, rec.Bounds, err = readMultiPatch(r)
 	default:
 		err = fmt.Errorf("unknown shape type: %d", rec.Type)
 		return
@@ -51,482 +54,394 @@ func (rec *Record) recordContent(r io.Reader) (err error) {
 	return
 }
 
-type Null struct {
+func readNull(r io.Reader) (geom.T, *geom.Bounds, error) {
+	return nil, nil, nil
 }
 
-func readNull(r io.Reader) (n *Null, err error) {
-	return &Null{}, nil
-}
-
-func (g *Null) towkt() string {
-	return ""
-}
-
-type Point struct {
-	//_ ShapeType // Point is an embedded type
-	X float64
-	Y float64
-}
-
-func (g *Point) towkt() string {
-	return fmt.Sprintf("POINT (%v %v)", g.X, g.Y)
-}
-
-func readPoint(r io.Reader) (p *Point, err error) {
-	p = &Point{}
-	err = binary.Read(r, binary.LittleEndian, p)
-	return
-}
-
-type Box struct {
-	Xmin float64
-	Ymin float64
-	Xmax float64
-	Ymax float64
-}
-
-func (g *Box) towkt() string {
-	return fmt.Sprintf("POLYGON ((%v %v, %v %v, %v %v, %v %v, %v %v))",
-		g.Xmin, g.Ymin, g.Xmax, g.Ymin, g.Xmax, g.Ymax,
-		g.Xmin, g.Ymax, g.Xmin, g.Ymin)
+func readPoint(r io.Reader) (geom.T, *geom.Bounds, error) {
+	p := new(geom.Point)
+	err := binary.Read(r, binary.LittleEndian, p)
+	return *p, nil, err
 }
 
 // reads a succession of numPoints, Point[numPoints]...
-func readNumPoints(r io.Reader) (points []Point, err error) {
+func readNumPoints(r io.Reader) (points []geom.Point, err error) {
 	var i int32
-	if err = binary.Read(r, L, &i); err != nil {
+	if err = binary.Read(r, l, &i); err != nil {
 		return
 	}
-	points = make([]Point, i)
-	err = binary.Read(r, L, points)
+	points = make([]geom.Point, i)
+	err = binary.Read(r, l, points)
 	return
 }
 
-type MultiPoint struct {
-	Box    Box
-	Points []Point
-}
-
-func readMultiPoint(r io.Reader) (mp *MultiPoint, err error) {
-	mp = &MultiPoint{}
-	if err = binary.Read(r, binary.LittleEndian, &mp.Box); err != nil {
-		return
+func readMultiPoint(r io.Reader) (geom.T, *geom.Bounds, error) {
+	mp := new(geom.MultiPoint)
+	bounds := new(geom.Bounds)
+	var err error
+	if err = binary.Read(r, binary.LittleEndian, bounds); err != nil {
+		return nil, nil, err
 	}
 	if mp.Points, err = readNumPoints(r); err != nil {
+		return nil, nil, err
+	}
+
+	return *mp, bounds, nil
+}
+
+func readBoundsPartsPoints(r io.Reader) (bounds *geom.Bounds,
+	parts []int32, points []geom.Point, err error) {
+	bounds = new(geom.Bounds)
+	if err = binary.Read(r, l, bounds); err != nil {
 		return
 	}
-	return
-}
-
-func (g *MultiPoint) towkt() string {
-	s := "MULTIPOINT ("
-	for i, p := range g.Points {
-		s += fmt.Sprintf("(%v %v)", p.X, p.Y)
-		if i != len(g.Points)-1 {
-			s += ","
-		}
-	}
-	s += ")"
-	return s
-}
-
-func readPartsPoints(r io.Reader) (parts []int32, points []Point, err error) {
 	var nprts int32
 	var npts int32
-	if err = binary.Read(r, L, &nprts); err != nil {
+	if err = binary.Read(r, l, &nprts); err != nil {
 		return
 	}
-	if err = binary.Read(r, L, &npts); err != nil {
+	if err = binary.Read(r, l, &npts); err != nil {
 		return
 	}
 
 	parts = make([]int32, nprts)
-	if err = binary.Read(r, L, parts); err != nil {
+	if err = binary.Read(r, l, parts); err != nil {
 		return
 	}
-	points = make([]Point, npts)
-	err = binary.Read(r, L, points)
+	points = make([]geom.Point, npts)
+	err = binary.Read(r, l, points)
 	return
 }
 
-type PolyLine struct {
-	Box    Box
-	Parts  []int32
-	Points []Point
+type xrange struct {
+	min float64
+	max float64
 }
 
-func readPolyLine(r io.Reader) (pl *PolyLine, err error) {
-	pl = &PolyLine{}
-	if err = binary.Read(r, L, &pl.Box); err != nil {
+func readBoundsPartsPointsM(r io.Reader) (bounds *geom.Bounds,
+	parts []int32, points []geom.Point, M []float64, err error) {
+	bounds, parts, points, err = readBoundsPartsPoints(r)
+	if err != nil {
 		return
 	}
-	pl.Parts, pl.Points, err = readPartsPoints(r)
+	mrange := new(xrange)
+	if err = binary.Read(r, l, mrange); err != nil {
+		return
+	}
+	M = make([]float64, len(points))
+	err = binary.Read(r, l, M)
 	return
 }
 
-func (g *PolyLine) towkt() string {
-	var start, end int32
-	s := "MULTILINESTRING ("
-	for i := 0; i < len(g.Parts); i++ {
-		start = g.Parts[i]
-		if i == len(g.Parts)-1 {
-			end = len(g.Points)
-		} else {
-			end = g.Parts[i+1]
-		}
-		s += "("
+func readBoundsPartsPointsZM(r io.Reader) (bounds *geom.Bounds,
+	parts []int32, points []geom.Point, Z, M []float64, err error) {
+	bounds, parts, points, err = readBoundsPartsPoints(r)
+	if err != nil {
+		return
+	}
+	zrange := new(xrange)
+	if err = binary.Read(r, l, zrange); err != nil {
+		return
+	}
+	Z = make([]float64, len(points))
+	err = binary.Read(r, l, Z)
+	mrange := new(xrange)
+	if err = binary.Read(r, l, mrange); err != nil {
+		return
+	}
+	M = make([]float64, len(points))
+	err = binary.Read(r, l, M)
+	return
+}
+
+func getStartEnd(parts []int32, points []geom.Point, i int) (start, end int) {
+	start = int(parts[i])
+	if i == len(parts)-1 {
+		end = len(points)
+	} else {
+		end = int(parts[i+1])
+	}
+	return
+}
+
+func readPolyLine(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pl := new(geom.MultiLineString)
+	bounds, parts, points, err := readBoundsPartsPoints(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	pl.LineStrings = make([]geom.LineString, len(parts))
+	for i := 0; i < len(parts); i++ {
+		start, end := getStartEnd(parts, points, i)
+		pl.LineStrings[i].Points = make([]geom.Point, end-start)
 		for j := start; j < end; j++ {
-
-			if j != end-1 {
-				s += ","
-			}
-		}
-		s += ")"
-		if i != len(g.Parts)-1 {
-			s += ","
+			pl.LineStrings[i].Points[j-start] = points[j]
 		}
 	}
-	for i, p := range g.Points {
-		s += fmt.Sprintf("%v %v", p.X, p.Y)
-		if i != len(g.Points)-1 {
-			s += ","
+	return *pl, bounds, nil
+
+}
+
+func readPolygon(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pg := new(geom.Polygon)
+	bounds, parts, points, err := readBoundsPartsPoints(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	pg.Rings = make([][]geom.Point, len(parts))
+	for i := 0; i < len(parts); i++ {
+		start, end := getStartEnd(parts, points, i)
+		pg.Rings[i] = make([]geom.Point, end-start)
+		// Go backwards around the rings to switch to OGC format
+		for j := end - 1; j >= start; j-- {
+			pg.Rings[i][j-start] = points[j]
 		}
 	}
-	s += ")"
-	return s
+	return *pg, bounds, nil
 }
 
-func (p *PolyLine) String() string {
-	str := fmt.Sprintf("Box: \n%s", p.Box.String())
-	//str += fmt.Sprintf("NumParts: %d\n", p.NumParts)
-	//str += fmt.Sprintf("NumPoints: %d\n", p.NumPoints)
-	for i, p := range p.Parts {
-		str += fmt.Sprintf("part %d : %d\n", i, p)
-	}
-	for i, p := range p.Points {
-		str += fmt.Sprintf("point %d : %s", i, p.String())
-	}
-	return str
+func readPointM(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pm := new(geom.PointM)
+	err := binary.Read(r, l, pm)
+	return pm, nil, err
 }
 
-type Polygon struct {
-	PolyLine
+func readMultiPointM(r io.Reader) (geom.T, *geom.Bounds, error) {
+	var err error
+	mp := new(geom.MultiPointM)
+	bounds := new(geom.Bounds)
+	if err := binary.Read(r, l, bounds); err != nil {
+		return nil, nil, err
+	}
+	var points []geom.Point
+	if points, err = readNumPoints(r); err != nil {
+		return nil, nil, err
+	}
+	mr := new(xrange)
+	if err = binary.Read(r, l, mr); err != nil {
+		return nil, nil, err
+	}
+	marray := make([]float64, len(mp.Points))
+	if err = binary.Read(r, l, marray); err != nil {
+		return nil, nil, err
+	}
+	mp.Points = make([]geom.PointM, len(points))
+	for i, point := range points {
+		p := new(geom.PointM)
+		p.X = point.X
+		p.Y = point.Y
+		p.M = marray[i]
+		mp.Points[i] = *p
+	}
+	return *mp, bounds, nil
 }
 
-func (p *Polygon) String() string {
-	str := fmt.Sprintf("Box: %s\n", p.Box.String())
-	//str += fmt.Sprintf("NumParts: %d\n", p.NumParts)
-	//str += fmt.Sprintf("NumPoints: %d\n", p.NumPoints)
-	for i, p := range p.Parts {
-		str += fmt.Sprintf("part %d : %d\n", i, p)
+func readPolyLineM(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pl := new(geom.MultiLineStringM)
+	bounds, parts, points, M, err := readBoundsPartsPointsM(r)
+	if err != nil {
+		return nil, nil, err
 	}
-	for i, p := range p.Points {
-		str += fmt.Sprintf("point %d : %s\n", i, p.String())
+	pl.LineStrings = make([]geom.LineStringM, len(parts))
+	for i := 0; i < len(parts); i++ {
+		start, end := getStartEnd(parts, points, i)
+		pl.LineStrings[i].Points = make([]geom.PointM, end-start)
+		for j := start; j < end; j++ {
+			p := new(geom.PointM)
+			p.X = points[j].X
+			p.Y = points[j].Y
+			p.M = M[j]
+			pl.LineStrings[i].Points[j-start] = *p
+		}
 	}
-	return str
-
+	return *pl, bounds, nil
 }
 
-func readPolygon(r io.Reader) (pg *Polygon, err error) {
-	pg = &Polygon{}
-	if err = binary.Read(r, L, &pg.Box); err != nil {
-		return
+func readPolygonM(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pg := new(geom.PolygonM)
+	bounds, parts, points, M, err := readBoundsPartsPointsM(r)
+	if err != nil {
+		return nil, nil, err
 	}
-	pg.Parts, pg.Points, err = readPartsPoints(r)
-	return
-
+	pg.Rings = make([][]geom.PointM, len(parts))
+	for i := 0; i < len(parts); i++ {
+		start, end := getStartEnd(parts, points, i)
+		pg.Rings[i] = make([]geom.PointM, end-start)
+		// Go backwards around the rings to switch to OGC format
+		for j := end - 1; j >= start; j-- {
+			p := new(geom.PointM)
+			p.X = points[j].X
+			p.Y = points[j].Y
+			p.M = M[j]
+			pg.Rings[i][j-start] = *p
+		}
+	}
+	return *pg, bounds, nil
 }
 
-type PointM struct {
-	X float64
-	Y float64
-	M float64
+func readPointZ(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pzm := new(geom.PointZM)
+	err := binary.Read(r, l, pzm)
+	return *pzm, nil, err
 }
 
-func readPointM(r io.Reader) (pm *PointM, err error) {
-	pm = &PointM{}
-	err = binary.Read(r, L, pm)
-	return
+func readMultiPointZ(r io.Reader) (geom.T, *geom.Bounds, error) {
+	var err error
+	mp := new(geom.MultiPointZM)
+	bounds := new(geom.Bounds)
+	if err := binary.Read(r, l, bounds); err != nil {
+		return nil, nil, err
+	}
+	var points []geom.Point
+	if points, err = readNumPoints(r); err != nil {
+		return nil, nil, err
+	}
+	zr := new(xrange)
+	if err = binary.Read(r, l, zr); err != nil {
+		return nil, nil, err
+	}
+	zarray := make([]float64, len(mp.Points))
+	if err = binary.Read(r, l, zarray); err != nil {
+		return nil, nil, err
+	}
+	mr := new(xrange)
+	if err = binary.Read(r, l, mr); err != nil {
+		return nil, nil, err
+	}
+	marray := make([]float64, len(mp.Points))
+	if err = binary.Read(r, l, marray); err != nil {
+		return nil, nil, err
+	}
+	mp.Points = make([]geom.PointZM, len(points))
+	for i, point := range points {
+		p := new(geom.PointZM)
+		p.X = point.X
+		p.Y = point.Y
+		p.Z = zarray[i]
+		p.M = marray[i]
+		mp.Points[i] = *p
+	}
+	return *mp, bounds, nil
 }
 
-type MRange struct {
-	Mmin float64
-	Mmax float64
-}
-type MultiPointM struct {
-	Box    Box
-	Points []Point
-	MRange MRange    // optional
-	MArray []float64 // optional
-}
-
-func readMultiPointM(r io.Reader) (mp *MultiPointM, err error) {
-	mp = &MultiPointM{}
-	if err = binary.Read(r, L, &mp.Box); err != nil {
-		return
+func readPolyLineZ(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pl := new(geom.MultiLineStringZM)
+	bounds, parts, points, Z, M, err := readBoundsPartsPointsZM(r)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	if mp.Points, err = readNumPoints(r); err != nil {
-		return
+	pl.LineStrings = make([]geom.LineStringZM, len(parts))
+	for i := 0; i < len(parts); i++ {
+		start, end := getStartEnd(parts, points, i)
+		pl.LineStrings[i].Points = make([]geom.PointZM, end-start)
+		for j := start; j < end; j++ {
+			p := new(geom.PointZM)
+			p.X = points[j].X
+			p.Y = points[j].Y
+			p.Z = Z[j]
+			p.M = M[j]
+			pl.LineStrings[i].Points[j-start] = *p
+		}
 	}
-
-	if err = binary.Read(r, L, &mp.MRange); err != nil {
-		return
-	}
-	mp.MArray = make([]float64, len(mp.Points))
-	err = binary.Read(r, L, mp.MArray)
-	return
-
+	return *pl, bounds, nil
 }
 
-type PolyLineM struct {
-	Box    Box
-	Parts  []int32
-	Points []Point
-	MRange MRange    // optional
-	MArray []float64 // optional
+func readPolygonZ(r io.Reader) (geom.T, *geom.Bounds, error) {
+	pg := new(geom.PolygonZM)
+	bounds, parts, points, Z, M, err := readBoundsPartsPointsZM(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	pg.Rings = make([][]geom.PointZM, len(parts))
+	for i := 0; i < len(parts); i++ {
+		start, end := getStartEnd(parts, points, i)
+		pg.Rings[i] = make([]geom.PointZM, end-start)
+		// Go backwards around the rings to switch to OGC format
+		for j := end - 1; j >= start; j-- {
+			p := new(geom.PointZM)
+			p.X = points[j].X
+			p.Y = points[j].Y
+			p.Z = Z[j]
+			p.M = M[j]
+			pg.Rings[i][j-start] = *p
+		}
+	}
+	return *pg, bounds, nil
 }
 
-func readPolyLineM(r io.Reader) (pl *PolyLineM, err error) {
-	pl = &PolyLineM{}
-	if err = binary.Read(r, L, pl.Box); err != nil {
-		return
-	}
-
-	if pl.Parts, pl.Points, err = readPartsPoints(r); err != nil {
-		return
-	}
-
-	if err = binary.Read(r, L, pl.MRange); err != nil {
-		return
-	}
-	pl.MArray = make([]float64, len(pl.Points))
-
-	err = binary.Read(r, L, pl.MArray)
-	return
-}
-
-type PolygonM struct {
-	PolyLineM
-}
-
-func readPolygonM(r io.Reader) (pg *PolygonM, err error) {
-	pg = &PolygonM{}
-	if err = binary.Read(r, L, pg.Box); err != nil {
-		return
-	}
-	if pg.Parts, pg.Points, err = readPartsPoints(r); err != nil {
-		return
-	}
-
-	if err = binary.Read(r, L, pg.MRange); err != nil {
-		return
-	}
-	pg.MArray = make([]float64, len(pg.Points))
-
-	err = binary.Read(r, L, pg.MArray)
-	return
-}
-
-type PointZ struct {
-	X float64
-	Y float64
-	Z float64
-	M float64
-}
-
-func readPointZ(r io.Reader) (p *PointZ, err error) {
-	p = &PointZ{}
-	err = binary.Read(r, L, &p)
-	return
-
-}
-
-type ZRange struct {
-	Zmin float64
-	Zmax float64
-}
-type MultiPointZ struct {
-	Box    Box
-	Points []Point
-	ZRange ZRange
-	ZArray []float64
-	MRange MRange    // optional
-	MArray []float64 // optional
-}
-
-func readMultiPointZ(r io.Reader) (mp *MultiPointZ, err error) {
-	mp = &MultiPointZ{}
-	if err = binary.Read(r, L, mp.Box); err != nil {
-		return
-	}
-	if mp.Points, err = readNumPoints(r); err != nil {
-		return
-	}
-	if err = binary.Read(r, L, mp.ZRange); err != nil {
-		return
-	}
-	mp.ZArray = make([]float64, len(mp.Points))
-	if err = binary.Read(r, L, mp.ZArray); err != nil {
-		return
-	}
-	if err = binary.Read(r, L, mp.MRange); err != nil {
-		return
-	}
-	mp.MArray = make([]float64, len(mp.Points))
-
-	err = binary.Read(r, L, mp.MArray)
-	return
-}
-
-type PolyLineZ struct {
-	Box       Box
-	NumParts  int32
-	NumPoints int32
-	Parts     []int32
-	Points    []Point
-	ZRange    ZRange
-	ZArray    []float64 //optional
-	MRange    MRange    // optional
-	MArray    []float64 //optional
-}
-
-func readPolyLineZ(r io.Reader) (pl *PolyLineZ, err error) {
-	pl = &PolyLineZ{}
-
-	if err = binary.Read(r, L, pl.Box); err != nil {
-		return
-	}
-	if pl.Parts, pl.Points, err = readPartsPoints(r); err != nil {
-		return
-	}
-
-	if err = binary.Read(r, L, pl.ZRange); err != nil {
-		return
-	}
-
-	pl.ZArray = make([]float64, len(pl.Points))
-	if err = binary.Read(r, L, pl.ZArray); err != nil {
-		return
-	}
-	if err = binary.Read(r, L, pl.MRange); err != nil {
-		return
-	}
-	pl.MArray = make([]float64, len(pl.Points))
-	if err = binary.Read(r, L, pl.MArray); err != nil {
-		return
-	}
-	return
-
-}
-
-type PolygonZ struct {
-	PolyLineZ
-}
-
-func readPolygonZ(r io.Reader) (pg *PolygonZ, err error) {
-	pg = &PolygonZ{}
-
-	if err = binary.Read(r, L, pg.Box); err != nil {
-		return
-	}
-	if pg.Parts, pg.Points, err = readPartsPoints(r); err != nil {
-		return
-	}
-
-	if err = binary.Read(r, L, pg.ZRange); err != nil {
-		return
-	}
-
-	pg.ZArray = make([]float64, len(pg.Points))
-	if err = binary.Read(r, L, pg.ZArray); err != nil {
-		return
-	}
-	if err = binary.Read(r, L, pg.MRange); err != nil {
-		return
-	}
-	pg.MArray = make([]float64, len(pg.Points))
-	if err = binary.Read(r, L, pg.MArray); err != nil {
-		return
-	}
-	return
-
-}
-
-type PartType int32
-
-const (
-	TRIANGLE_STRIP PartType = iota
-	TRIANGLE_FAN
-	OUTER_RING
-	INNER_RING
-	FIRST_RING
-	RING
-)
-
-func (p PartType) String() string {
-	switch p {
-	case TRIANGLE_STRIP:
-		return "TRIANGLE_STRIP"
-	case TRIANGLE_FAN:
-		return "TRIANGLE_FAN"
-	case OUTER_RING:
-		return "OUTER_RING"
-	case INNER_RING:
-		return "INNER_RING"
-	case FIRST_RING:
-		return "FIRST_RING"
-	case RING:
-		return "RING"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-type MultiPatch struct {
-	Box       Box
-	Parts     []int32
-	PartTypes []PartType
-	Points    []Point
-	ZRange    ZRange    // optional
-	MRange    MRange    // optional
-	MArray    []float64 // optional
-}
-
-func readMultiPatch(r io.Reader) (mp *MultiPatch, err error) {
-	mp = &MultiPatch{}
-	if err = binary.Read(r, L, mp.Box); err != nil {
-		return
-	}
-
-	var prts int32
-	if err = binary.Read(r, L, &prts); err != nil {
-		return
-	}
-	var pts int32
-	if err = binary.Read(r, L, &pts); err != nil {
-		return
-	}
-	mp.Parts = make([]int32, prts)
-	if err = binary.Read(r, L, &mp.Parts); err != nil {
-		return
-	}
-	mp.PartTypes = make([]PartType, prts)
-	if err = binary.Read(r, L, &mp.PartTypes); err != nil {
-		return
-	}
-	mp.Points = make([]Point, pts)
-	if err = binary.Read(r, L, mp.Points); err != nil {
-		return
-	}
-	if err = binary.Read(r, L, mp.ZRange); err != nil {
-		return
-	}
-	if err = binary.Read(r, L, mp.MRange); err != nil {
-		return
-	}
-	mp.MArray = make([]float64, pts)
-	err = binary.Read(r, L, mp.MArray)
-	return
-
-}
+//type partType int32
+//
+//const (
+//	tRIANGLE_STRIP PartType = iota
+//	tRIANGLE_FAN
+//	oUTER_RING
+//	iNNER_RING
+//	fIRST_RING
+//	rING
+//)
+//
+//func (p PartType) String() string {
+//	switch p {
+//	case tRIANGLE_STRIP:
+//		return "TRIANGLE_STRIP"
+//	case tRIANGLE_FAN:
+//		return "TRIANGLE_FAN"
+//	case oUTER_RING:
+//		return "OUTER_RING"
+//	case iNNER_RING:
+//		return "INNER_RING"
+//	case fIRST_RING:
+//		return "FIRST_RING"
+//	case rING:
+//		return "RING"
+//	default:
+//		return "UNKNOWN"
+//	}
+//}
+//
+//type MultiPatch struct {
+//	Box       Box
+//	Parts     []int32
+//	PartTypes []PartType
+//	Points    []Point
+//	ZRange    ZRange    // optional
+//	MRange    MRange    // optional
+//	MArray    []float64 // optional
+//}
+//
+//func readMultiPatch(r io.Reader) (mp *MultiPatch, err error) {
+//	mp = &MultiPatch{}
+//	if err = binary.Read(r, L, mp.Box); err != nil {
+//		return
+//	}
+//
+//	var prts int32
+//	if err = binary.Read(r, L, &prts); err != nil {
+//		return
+//	}
+//	var pts int32
+//	if err = binary.Read(r, L, &pts); err != nil {
+//		return
+//	}
+//	mp.Parts = make([]int32, prts)
+//	if err = binary.Read(r, L, &mp.Parts); err != nil {
+//		return
+//	}
+//	mp.PartTypes = make([]PartType, prts)
+//	if err = binary.Read(r, L, &mp.PartTypes); err != nil {
+//		return
+//	}
+//	mp.Points = make([]Point, pts)
+//	if err = binary.Read(r, L, mp.Points); err != nil {
+//		return
+//	}
+//	if err = binary.Read(r, L, mp.ZRange); err != nil {
+//		return
+//	}
+//	if err = binary.Read(r, L, mp.MRange); err != nil {
+//		return
+//	}
+//	mp.MArray = make([]float64, pts)
+//	err = binary.Read(r, L, mp.MArray)
+//	return
+//}

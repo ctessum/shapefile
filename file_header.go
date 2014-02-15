@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-type MainFileHeader struct {
+type ShapefileHeader struct {
 	//	FileCode   int32
 	//	Unused     [20]byte
 	FileLength int32 // length in 16 bit words
@@ -22,7 +22,7 @@ type MainFileHeader struct {
 	Mmax       float64
 }
 
-func (h *MainFileHeader) String() string {
+func (h *ShapefileHeader) String() string {
 	str := fmt.Sprintf("FileLength %d\n", h.FileLength)
 	str += fmt.Sprintf("Version %d\n", h.Version)
 	str += fmt.Sprintf("ShapeType %s\n", h.ShapeType.String())
@@ -91,18 +91,18 @@ func (s ShapeType) String() string {
 	}
 }
 
-type mainFileRecordHeader struct {
+type shapefileRecordHeader struct {
 	RecordNumber  int32
 	ContentLength int32
 }
 
-func (h *mainFileRecordHeader) String() string {
+func (h *shapefileRecordHeader) String() string {
 	str := fmt.Sprintf("RecordNumber %d\n", h.RecordNumber)
 	str += fmt.Sprintf("ContentLength %d\n", h.ContentLength)
 	return str
 }
 
-func newMainFileHeaderFromReader(r io.Reader) (hdr *MainFileHeader, err error) {
+func newShapefileHeaderFromReader(r io.Reader) (hdr *ShapefileHeader, err error) {
 
 	var fileCode int32
 	if err = binary.Read(r, binary.BigEndian, &fileCode); err != nil {
@@ -119,7 +119,7 @@ func newMainFileHeaderFromReader(r io.Reader) (hdr *MainFileHeader, err error) {
 		return nil, fmt.Errorf("can't read UNUSED")
 	}
 
-	hdr = &MainFileHeader{}
+	hdr = &ShapefileHeader{}
 	if err = binary.Read(r, binary.BigEndian, &hdr.FileLength); err != nil {
 		return
 	}
@@ -160,8 +160,8 @@ func newMainFileHeaderFromReader(r io.Reader) (hdr *MainFileHeader, err error) {
 	return
 }
 
-func newMainFileRecordHeaderFromReader(r io.Reader) (hdr *mainFileRecordHeader, err error) {
-	hdr = new(mainFileRecordHeader)
+func newShapefileRecordHeaderFromReader(r io.Reader) (hdr *shapefileRecordHeader, err error) {
+	hdr = new(shapefileRecordHeader)
 	if err = binary.Read(r, binary.BigEndian, &hdr.RecordNumber); err != nil {
 		return
 	}

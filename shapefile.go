@@ -1,56 +1,51 @@
 package shapefile
 
 import (
+	"github.com/twpayne/gogeom/geom"
 	"io"
 )
 
 type Shapefile struct {
-	Header  *MainFileHeader
-	Records []*Record
-	f       io.Reader
+	Header *ShapefileHeader
+	rdr    io.Reader
+	i      int32 // file cursor [words]
 }
 
-type Record struct {
+type ShapefileRecord struct {
 	Type     ShapeType
-	header   *mainFileRecordHeader
-	Geometry geometry
+	header   *shapefileRecordHeader
+	Bounds   *geom.Bounds
+	Geometry geom.T
 }
 
-// Convert record coordinates to well-known text (WKT)
-func (rec *Record) ToWKT() {
-	rec.geometry.towkt()
-}
-
-type geometry interface {
-	towkt() string
-}
-
-func NewShapefile(rdr io.Reader) (s *Shapefile, err error) {
+// Open shapefile for reading.
+func OpenShapefile(rdr io.Reader) (s *Shapefile, err error) {
 	s = &Shapefile{}
+	s.rdr = rdr
 
-	var h *MainFileHeader
-	if h, err = newMainFileHeaderFromReader(rdr); err != nil {
+	var h *ShapefileHeader
+	if h, err = newShapefileHeaderFromReader(s.rdr); err != nil {
 		return
 	}
 
 	s.Header = h
-	i := s.Header.FileLength - 50 // length of header = 100 bytes = 50 words
-	var rh *mainFileRecordHeader
-	var rec *Record
-	for {
-		if i <= 0 {
-			break
-		}
-		if rh, err = newMainFileRecordHeaderFromReader(rdr); err != nil {
-			return
-		}
-		i = i - rh.ContentLength - 4
-		rec = new(Record)
-		rec.header = rh
-		if err = rec.recordContent(rdr); err != nil {
-			return
-		}
-		s.Records = append(s.Records, rec)
+	s.i = s.Header.FileLength - 50 // length of header = 100 bytes = 50 words
+	return
+}
+
+// Get next record in file. If end of file, err=io.EOF.
+func (s *Shapefile) NextRecord() (rec *ShapefileRecord, err error) {
+	rec = new(ShapefileRecord)
+	if s.i <= 0 {
+		err = io.EOF
+		return
 	}
+	if rec.header, err = newShapefileRecordHeaderFromReader(s.rdr); err != nil {
+		return
+	}
+	if err = rec.recordContent(s.rdr); err != nil {
+		return
+	}
+	s.i = s.i - rec.header.ContentLength - 4
 	return
 }
