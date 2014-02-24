@@ -91,7 +91,11 @@ func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
 		case Float, Double:
 			numberStr := strings.TrimSpace((string)(rawField))
 			if entry[i], err = strconv.ParseFloat(numberStr, 64); err != nil {
-				return
+				// If the float isn't valid, return a the error message
+				// in the data field and let the calling program handle
+				// it.
+				entry[i] = err
+				err = nil
 			}
 		case Logical:
 			switch (string)(rawField) {
