@@ -94,7 +94,7 @@ func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
 				// If the float isn't valid, return a the error message
 				// in the data field and let the calling program handle
 				// it.
-				entry[i] = err
+				entry[i] = fmt.Errorf(err.Error())
 				err = nil
 			}
 		case Logical:
