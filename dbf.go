@@ -81,9 +81,14 @@ func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
 				var val int64
 				numberStr := strings.TrimSpace((string)(rawField))
 				if val, err = strconv.ParseInt(numberStr, 10, 64); err != nil {
-					return
+					// If the float isn't valid, return a the error message
+					// in the data field and let the calling program handle
+					// it.
+					entry[i] = fmt.Errorf(err.Error())
+					err = nil
+				} else {
+					entry[i] = int(val)
 				}
-				entry[i] = int(val)
 				break
 			}
 			// handle it like a float ...
