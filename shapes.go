@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/twpayne/gogeom/geom"
+	"github.com/ctessum/geomop"
 	"io"
 )
 
@@ -25,6 +26,7 @@ func (rec *ShapefileRecord) recordContent(r io.Reader) (err error) {
 		rec.Geometry, rec.Bounds, err = readPolyLine(r)
 	case POLYGON:
 		rec.Geometry, rec.Bounds, err = readPolygon(r)
+		geomop.FixOrientation(rec.Geometry)
 	case MULTI_POINT:
 		rec.Geometry, rec.Bounds, err = readMultiPoint(r)
 	case POINT_Z:
