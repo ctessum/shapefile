@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -73,14 +74,20 @@ func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
 		rawField := rawEntry[offset : offset+(int)(desc.FieldLength)]
 		offset += (int)(desc.FieldLength)
 
+		stringField := (string)(rawField)
+		stringField = strings.TrimSpace(stringField)
+		// Remove any '\x00' null characters
+		if i := strings.IndexRune(stringField, '\x00'); i > -1 {
+			stringField = stringField[0:i]
+		}
+
 		switch desc.FieldType {
 		case Character, VarCharVar:
-			entry[i] = strings.TrimSpace((string)(rawField))
+			entry[i] = stringField
 		case Number, Integer:
 			if desc.DecimalCount == 0 {
 				var val int64
-				numberStr := strings.TrimSpace((string)(rawField))
-				if val, err = strconv.ParseInt(numberStr, 10, 64); err != nil {
+				if val, err = strconv.ParseInt(stringField, 10, 64); err != nil {
 					// If the float isn't valid, return a the error message
 					// in the data field and let the calling program handle
 					// it.
@@ -94,23 +101,26 @@ func (dbf *DBFFile) NextRecord() (entry []interface{}, err error) {
 			// handle it like a float ...
 			fallthrough
 		case Float, Double:
-			numberStr := strings.TrimSpace((string)(rawField))
-			if entry[i], err = strconv.ParseFloat(numberStr, 64); err != nil {
+			if entry[i], err = strconv.ParseFloat(stringField, 64); err != nil {
 				// If the float isn't valid, return a the error message
 				// in the data field and let the calling program handle
 				// it.
-				entry[i] = fmt.Errorf(err.Error())
+				if stringField == "" {
+					entry[i] = math.NaN()
+				} else {
+					entry[i] = fmt.Errorf(err.Error())
+				}
 				err = nil
 			}
 		case Logical:
-			switch (string)(rawField) {
+			switch stringField {
 			case "1", "T", "t", "Y", "y":
 				entry[i] = true
 			case "0", "F", "f", "N", "n":
 				entry[i] = false
 			default:
 				err = fmt.Errorf("Unsupported logical value `%v`",
-					(string)(rawField))
+					stringField)
 				return
 			}
 		default:
